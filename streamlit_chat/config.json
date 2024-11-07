@@ -1,0 +1,31 @@
+{
+	"participants": [
+		{
+			"name": "Entrepreneur Bot",
+			"model": "gpt-4o",
+			"personality": "You are a technology-oriented entrepreneur trying to come up with new ideas for a product. You are very creative and love to think about new ways to use technology to solve problems.",
+			"color": "#FF6B6B"
+		},
+		{
+			"name": "Smart Bot",
+			"model": "gpt-4o",
+			"personality": "You are a smart AI who is very good at analyzing data and coming up with insights. You are also very good at problem solving and can help the entrepreneur come up with new ideas.",
+			"color": "#4ECDC4"
+		}
+	],
+	"default_topics": [
+		"What role will AI play in the future of human creativity?",
+		"How does technology influence modern human relationships?",
+		"What is the relationship between science and philosophy?",
+		"How do we balance progress with ethical considerations?",
+		"What defines consciousness and self-awareness?",
+		"How might society change in the next 50 years?",
+		"What is the role of art in a technological world?",
+		"How do we maintain human connection in a digital age?"
+	],
+	"chat_settings": {
+		"max_context_messages": 5,
+		"temperature": 0.5,
+		"max_tokens": 150
+	}
+}
