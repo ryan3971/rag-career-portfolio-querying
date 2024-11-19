@@ -1,19 +1,16 @@
-from llama_index.llms.cohere import Cohere
+import os
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.embeddings.cohere import CohereEmbedding
 from qdrant_client import QdrantClient, AsyncQdrantClient
 from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-
 from llama_index.core import StorageContext
-from llama_index.core import SimpleKeywordTableIndex, VectorStoreIndex
-
-
 from llama_index.core.settings import Settings
+from llama_index.core import VectorStoreIndex
 
-import os
+from prompts import LLM_CONTEXT_PROMPT
 
-COLLECTION_NAME = "Notion_vector_store"
+COLLECTION_TEXT = "Notion_vector_store_text"
+COLLECTION_KEYWORD = "Notion_vector_store_keywords"
 
 def set_up_llm():
     
@@ -23,6 +20,7 @@ def set_up_llm():
         model="gpt-4o-mini", 
         temperature=0.5,
         api_key=OPENAI_API_KEY,
+        system_prompt=LLM_CONTEXT_PROMPT
     )
 
     Settings.llm = llm_openai
@@ -57,23 +55,44 @@ def index_database_connection():
         api_key=QDRANT_API_KEY
     )
     # set up the vector store
-    vector_store = QdrantVectorStore(
+    
+    vector_store_text = QdrantVectorStore(
         client=client, 
         aclient=aclient, 
-            collection_name=COLLECTION_NAME,
+        collection_name=COLLECTION_TEXT,
     )
+    
+    vector_store_keywords = QdrantVectorStore(
+        client=client, 
+        aclient=aclient, 
+        collection_name=COLLECTION_KEYWORD,
+    )
+    
+    storage_context_text = StorageContext.from_defaults(
+        vector_store=vector_store_text
+        )
     
     # storage context for caching (I think)
-    storage_context = StorageContext.from_defaults(
-        vector_store=vector_store
+    storage_context_keywords = StorageContext.from_defaults(
+        vector_store=vector_store_keywords
+        )
+    
+    index_text = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store_text,
+        storage_context=storage_context_text,
+        show_progress=True
         )
 
-    # Create index from vector store with storage context
-    index = VectorStoreIndex.from_vector_store(
-        vector_store=vector_store,
-        storage_context=storage_context,  # Add storage context
-    #    embed_model=embed_model_openai,
-        show_progress=True  # Optional: helps track progress
-    )
+    index_keywords = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store_keywords,
+        storage_context=storage_context_keywords,
+        show_progress=True
+        )
     
-    return index
+    # index_keyword_regex = KeywordTableIndex(
+    #     vector_store=vector_store_text,
+    #     text_key="text",
+    #     regex_key="regex"
+    # )
+    
+    return index_text, index_keywords#, index_keyword_regex

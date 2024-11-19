@@ -3,7 +3,6 @@ from llama_index.core.schema import NodeWithScore
 
 from llama_index.core.data_structs import Node
 from llama_index.core.response_synthesizers import ResponseMode
-from llama_index.core import get_response_synthesizer
 
 from llama_index.core.workflow import (
     Context,
@@ -13,13 +12,10 @@ from llama_index.core.workflow import (
     step,
 )
 
-from llama_index.retrievers.bm25 import BM25Retriever
-from llama_index.core.retrievers import QueryFusionRetriever
-
-from llama_index.core.postprocessor import SentenceEmbeddingOptimizer
+from llama_index.core import QueryBundle
 
 from llama_index.core import PromptTemplate
-from prompts import QUERY_GEN_PROMPT
+from prompts import QUERY_GEN_PROMPT, LLM_CONTEXT_PROMPT, Q_A_PROMPT
 
 '''
 - LLM and embeddings are set in the Settings so I shouldn't need to set them here
@@ -31,6 +27,33 @@ QUERY_GEN_PROMPT_TEMPLATE = PromptTemplate(QUERY_GEN_PROMPT)
 RETRIEVER_SIMILARITY_TOP_K = 10
 FUSION_SIMILARITY_TOP_K = 5
 
+# define a query type enum
+
+from enum import Enum
+from pydantic import BaseModel
+
+
+from llama_index.core.prompts import ChatPromptTemplate
+from llama_index.core.llms import ChatMessage
+
+from rag_tools import get_retriever, get_post_retrieval_transform, get_synthesizer
+from IPython.display import display, HTML
+import pandas as pd
+    
+from llama_index.core.schema import Node, NodeRelationship, RelatedNodeInfo
+
+def pretty_print(df):
+    return display(HTML(df.to_html().replace("\\n", "<br>")))
+
+
+def visualize_retrieved_nodes(nodes) -> None:
+    result_dicts = []
+    for node in nodes:
+        result_dict = {"Score": node.score, "Text": node.node.get_text()}
+        result_dicts.append(result_dict)
+
+    pretty_print(pd.DataFrame(result_dicts))
+
 class RetrieverEvent(Event):
     """Result of running retrieval"""
 
@@ -40,9 +63,6 @@ class PostRetrievalTransform(Event):
     """Result of running post retrieval transform"""
 
     nodes_transformed: list[NodeWithScore]
-    
-class ProgressEvent(Event):
-    msg: str
 
 class RAGWorkflow(Workflow):
     
@@ -52,79 +72,124 @@ class RAGWorkflow(Workflow):
         # initialize the LLM and embeddings
         self.llm = llm
         self.embed_model = embed_model
-    
+        
     @step
     async def retrieve(self, ctx: Context, ev: StartEvent) -> RetrieverEvent | None:
         "Entry point for RAG, triggered by a StartEvent with `query`."
         
         query = ev.get("query")
-        index = ev.get("index")
+        index_text = ev.get("index_text")
+        index_keywords = ev.get("index_keywords")
+        config = ev.get("config")
         
-        ctx.write_event_to_stream(ProgressEvent(msg=f"Query the database with: {query}"))
+        print(f"Querying the database with: {query}...")
 
         if not query:
             return None
 
-        # store the query in the global context
+        # store the query and index in the global context
         await ctx.set("query", query)
+        await ctx.set("index_text", index_text)
+        await ctx.set("index_keywords", index_keywords)
+        await ctx.set("config", config)
 
         # get the index from the global context
-        if index is None:
+        if index_text is None:
             print("Index is empty, load some documents before querying!")
             return None
         
-        # define the retrievers
-        # We want to retrieve more nodes then less so set the k value high. We can filter out
-        # nodes in post-processing
-        vector_retriever = index.as_retriever(similarity_top_k=RETRIEVER_SIMILARITY_TOP_K)
-        bm25_retriever = BM25Retriever.from_defaults(nodes=index.vector_store.get_nodes(), similarity_top_k=RETRIEVER_SIMILARITY_TOP_K)
-        
         # have the retriever output progress events to the stream
-        retriever = QueryFusionRetriever(
-            [vector_retriever, bm25_retriever],
-            similarity_top_k=FUSION_SIMILARITY_TOP_K,
-            num_queries=3,  # Set to 1 to disable query generation
-            mode="reciprocal_rerank",
-            use_async=True,
-            verbose=True,
-            llm=self.llm,
-        #    query_gen_prompt=QUERY_GEN_PROMPT_TEMPLATE
-        )
-
-        nodes = await retriever.aretrieve(query)
-        ctx.write_event_to_stream(ProgressEvent(msg=f"Retrieved {len(nodes)} nodes."))
-        return RetrieverEvent(nodes=nodes)
+        text_retriever = index_text.as_retriever(
+            similarity_threshold=0.6,
+            similarity_top_k=10
+            )
+        
+        text_nodes = await text_retriever.aretrieve(query)
+        
+        # print the first 100 characters of the retrieved text nodes, along with their score
+        # for node in text_nodes:
+        #     print(f"\n{'='*80}")
+        #     print(f"Text Node Content:\n{node.text[:100]}")
+        #     print(f"Text Node Score: {node.score if hasattr(node, 'score') else 'N/A'}")
+        
+        # run the retriever on the keyword index
+        retriever_keywords = index_keywords.as_retriever(
+            similarity_threshold=0.6,
+            similarity_top_k=10
+            )
+        
+        keyword_nodes = await retriever_keywords.aretrieve(query)
+        
+        # print the first 100 characters of the retrieved keyword nodes, along with their score
+        # for node in keyword_nodes:
+        #     print(f"\n{'='*80}")
+        #     print(f"Keyword Node Content:\n{node.text[:100]}")
+        #     print(f"Keyword Node Score: {node.score if hasattr(node, 'score') else 'N/A'}")
+                
+        parent_nodes = []
+        for kw_node in keyword_nodes:
+            parent_id = kw_node.node.relationships[NodeRelationship.PARENT].node_id
+            print(f"Parent ID: {parent_id}")
+            
+            # get the parent node from the text index
+            try:
+                parent_node = index_text.vector_store.get_nodes([parent_id])[0]
+                print(f"Found node: {parent_node}")
+            except ValueError as e:
+                print(f"Node not found: {e}")
+            
+            if parent_node:
+                parent_nodes.append(NodeWithScore(
+                    node=parent_node,
+                    score=kw_node.score
+                ))
+                print(f"Parent node found: {parent_node.text[:100]}")
+        
+        all_nodes = []
+        seen_ids = set()
+        
+        for node in text_nodes + parent_nodes:
+            if node.node_id not in seen_ids:
+                all_nodes.append(node)
+                seen_ids.add(node.node_id)
+        
+        # print the first 100 characters of the first 10 nodes
+        # for node in all_nodes[:10]:
+        #     print(f"\n{'='*80}")
+        #     print(f"Node Content:\n{node.text[:100]}")
+        #     print(f"{'='*80}")
+        
+        visualize_retrieved_nodes(all_nodes)
+                
+        return RetrieverEvent(nodes=all_nodes)
     
     @step
     async def post_retrieval_transform(self, ctx: Context, ev: RetrieverEvent) -> PostRetrievalTransform:
         """Transform the retrieved node before synthesizing"""
-
-        ctx.write_event_to_stream(ProgressEvent(msg=f"Transforming {len(ev.nodes)} nodes."))
-
-        #similarity_postprocessor = SimilarityPostprocessor(similarity_cutoff=0.7)
         
-        sentence_embedding_postprocessor = SentenceEmbeddingOptimizer(
-            embed_model=self.embed_model,
-            #percentile_cutoff=0.5,
-            context_before=2,
-            context_after=2,
-            threshold_cutoff=0.7
+        query = await ctx.get("query", default=None)
+        query_bundle = QueryBundle(query_str=query)
+        
+        config = await ctx.get("config", default=None)
+        
+        postprocessor = get_post_retrieval_transform(
+            post_retrieval_transform_type=config["postprocessor"]
         )
+      
         nodes = ev.nodes
-        #nodes_transformed = similarity_postprocessor.postprocess_nodes(nodes=nodes)
-        #print(f"First Transform: {len(nodes_transformed)} nodes.")
+        nodes_transformed = postprocessor.postprocess_nodes(nodes=nodes, query_bundle=query_bundle)
 
-        nodes_transformed = sentence_embedding_postprocessor.postprocess_nodes(nodes=nodes)
-        ctx.write_event_to_stream(ProgressEvent(msg=f"Transformed {len(nodes_transformed)} nodes."))
-        
         return PostRetrievalTransform(nodes_transformed=nodes_transformed)
         
-
     @step
     async def synthesize(self, ctx: Context, ev: PostRetrievalTransform) -> StopEvent:
         """Return a streaming response using reranked nodes."""
         
-        ctx.write_event_to_stream(ProgressEvent(msg="Synthesizing the response"))
+        response_mode_options = {"tree_summarize": ResponseMode.TREE_SUMMARIZE,
+                                 "compact": ResponseMode.COMPACT,
+                                 "no_text": ResponseMode.NO_TEXT}
+        
+        config = await ctx.get("config", default=None)
         
         prompt = """When possible, group output based on common fields such as Employer or Project Name and make sure to associate the response with the projects they were extracted from"""
         
@@ -155,19 +220,20 @@ class RAGWorkflow(Workflow):
             Answer:'''
         )
         
+        q_a_prompt = PromptTemplate(Q_A_PROMPT)
+        
         qa_prompt = PromptTemplate(qa_prompt_tmpl)
         qa_prompt_tmpl_2 = PromptTemplate(qa_prompt_tmpl_2)
+        
+        context_prompt = PromptTemplate(LLM_CONTEXT_PROMPT)
 
-        response_synthesizer = get_response_synthesizer(
-            response_mode=ResponseMode.TREE_SUMMARIZE,
-            llm=self.llm,
-            streaming=True,
-            verbose=True,
-            summary_template=qa_prompt_tmpl_2,
+        response_synthesizer = get_synthesizer(
+            response_mode_options[config["response_mode"]],
+            context_prompt
             )
         
         query = await ctx.get("query", default=None)
         nodes = ev.nodes_transformed
         response = await response_synthesizer.asynthesize(query, nodes=nodes)
-        ctx.write_event_to_stream(ProgressEvent(msg="Synthesized the response"))
+        print("Response generated.")
         return StopEvent(result=response)
