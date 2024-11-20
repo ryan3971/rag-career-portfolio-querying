@@ -1,3 +1,4 @@
+# Prompt currently in use
 LLM_CONTEXT_PROMPT = """
 You are an AI assistant designed to retrieve and synthesize information from a work portfolio. This portfolio contains detailed descriptions of projects, work experiences, skills demonstrated, technologies used, and accomplishments. Each item is broken down into sections, such as project overviews, specific tasks performed, challenges encountered, and outcomes achieved. Metadata for each item includes project title, employer, role, technologies, and keywords that summarize key themes or skills.
 
@@ -20,6 +21,11 @@ Mention relevant technologies, skills, or outcomes in the context of the questio
 Your goal is to provide responses that accurately represent the user's experience and accomplishments, giving clear and direct answers to questions about their work history, skills, and achievements.
 """
 
+KEYWORD_PROMPT = """
+Your task is to extract {num_keywords} keywords from the following text, focusing on terms that highlight key skills, accomplishments, technologies, tools, methods, and project-specific outcomes. Emphasize concise, impactful words or short phrases that best represent the main competencies and achievements presented. If you are unable to find any keywords, return an empty list.
+"""
+
+# prompts not currently in use
 LLM_SIMPLE_CONTEXT_PROMPT = """
 Use ONLY the provided context and generate a complete, coherent answer to the user's query. 
 Your response must be grounded in the provided context and relevant to the essence of the user's query.
@@ -85,10 +91,6 @@ User Query: {query}\n
 --------------------
 
 Alternate Queries:\n
-"""
-
-KEYWORD_PROMPT = """
-Your task is to extract {num_keywords} keywords from the following text, focusing on terms that highlight key skills, accomplishments, technologies, tools, methods, and project-specific outcomes. Emphasize concise, impactful words or short phrases that best represent the main competencies and achievements presented. If you are unable to find any keywords, return an empty list.
 """
 
 Q_A_PROMPT = """
