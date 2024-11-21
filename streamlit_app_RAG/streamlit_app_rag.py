@@ -13,7 +13,8 @@ SAMPLE_QUERIES = {
     "Tell me about your skills": "What are your main technical skills and expertise?",
     "Work experience": "Can you describe your work experience and key achievements?",
     "Education background": "What is your educational background and relevant certifications?",
-    "Leadership experience": "Can you tell me about your leadership experience and team management skills?"
+    "Leadership experience": "Can you tell me about your leadership experience and team management skills?",
+    "Long, fun Query": "You are applying for a role that involves building web-based applications with a focus on creating intuitive user interfaces and implementing machine learning models for real-time data analysis. The position requires expertise in frontend development using modern frameworks like React or Next.js, as well as experience integrating backend systems for AI-powered features. Please provide detailed examples of your projects or experiences where you developed interactive UIs, integrated machine learning models into applications, or worked on AI-powered tools. Include the specific technologies, frameworks, and programming languages you used (e.g., JavaScript, TypeScript, Python, TensorFlow, PyTorch), challenges you encountered during development, and how you addressed them. Additionally, highlight how you optimized performance, ensured scalability, and collaborated with cross-functional teams to deliver these solutions."
 }
 
 page_style = """
@@ -69,9 +70,10 @@ class DebugMessage:
         }
 
     def add_to_section(self, section: str, message: str):
-        """Add a message to a specific section"""
+        """Add a message to a specific section with timestamp"""
         if section in self.sections:
-            self.sections[section].append(message.strip())
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Format as HH:MM:SS.mmm
+            self.sections[section].append(f"[{timestamp}] {message.strip()}")
 
     def get_formatted_section(self, section: str, title: str) -> str:
         """Format a section's messages with a title"""
@@ -228,10 +230,7 @@ class RAGApp:
             st.markdown("""
                 ### Tips
                 - Select from sample queries or type your own
-                - Use specific questions for better results
                 - Check the debug panel to understand the process
-                - First 5 queries are free
-                - Provide your API key for unlimited queries
             """)
             
             if st.button("Clear Chat History"):

@@ -123,17 +123,21 @@ class RAGWorkflow(Workflow):
         )
         nodes_transformed = similarity_postprocessor.postprocess_nodes(nodes=ev.nodes, query_bundle=query_bundle)
         
+        log_step("processing", "Similarity postprocessor done")
+        
         # Initialize reranker with optimal settings
-        reranker = SentenceEmbeddingOptimizer(
+        sentence_embedding_optimizer = SentenceEmbeddingOptimizer(
             embed_model=Settings.embed_model,
-            percentile_cutoff=0.3,  # Keep top 30% of sentences
-            context_before=1,
-            context_after=1,
+            percentile_cutoff=0.7,  # Keep top 70% of sentences
+            context_before=2,
+            context_after=2,
+            threshold_cutoff=0.15
         )
       
-        nodes_transformed = reranker.postprocess_nodes(nodes=nodes_transformed, query_bundle=query_bundle)
+        # Running this takes the longest time in the pipeline
+        nodes_transformed = sentence_embedding_optimizer.postprocess_nodes(nodes=nodes_transformed, query_bundle=query_bundle)
         
-        log_step("processing", "Reranked and transformed nodes:", nodes_transformed)
+        log_step("processing", "Filtered and transformed nodes:", nodes_transformed)
         return PostRetrievalTransform(nodes_transformed=nodes_transformed)
         
     @step

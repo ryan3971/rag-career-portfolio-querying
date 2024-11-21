@@ -10,8 +10,8 @@ from llama_index.core.settings import Settings
 from prompts import LLM_CONTEXT_PROMPT
 
 # Collection names as constants
-COLLECTION_TEXT = os.getenv("COLLECTION_TEXT")
-COLLECTION_KEYWORD = os.getenv("COLLECTION_KEYWORD")
+COLLECTION_TEXT = "Notion_vector_store_text"#os.getenv("COLLECTION_TEXT")
+COLLECTION_KEYWORD = "Notion_vector_store_keywords"#os.getenv("COLLECTION_KEYWORD")
 
 # Cache API key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
