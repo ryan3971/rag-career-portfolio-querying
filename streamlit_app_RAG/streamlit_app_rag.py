@@ -1,97 +1,135 @@
 import streamlit as st
-from llama_index.core.memory import ChatMemoryBuffer
 import os
 import sys
-from typing import Optional
-from io import StringIO
 from contextlib import contextmanager
 import queue
-import threading
 from datetime import datetime
 
-from llama_index.core.retrievers import QueryFusionRetriever
-from llama_index.retrievers.bm25 import BM25Retriever
-from llama_index.core.retrievers import QueryFusionRetriever
 
-from llama_index.core.settings import Settings
-from llama_index.core import VectorStoreIndex
-
-from llama_index.core.postprocessor import SentenceEmbeddingOptimizer
-from llama_index.core.postprocessor.llm_rerank import LLMRerank
-from llama_index.core.postprocessor import SimilarityPostprocessor
-
-from llama_index.core.response_synthesizers import ResponseMode
-from llama_index.core import get_response_synthesizer
-
-from typing import Dict, Any
-
-from typing import List
+# Sample queries for the dropdown
+SAMPLE_QUERIES = {
+    "Select a sample query...": "",
+    "What projects have you worked on?": "What projects have you worked on and what technologies did you use?",
+    "Tell me about your skills": "What are your main technical skills and expertise?",
+    "Work experience": "Can you describe your work experience and key achievements?",
+    "Education background": "What is your educational background and relevant certifications?",
+    "Leadership experience": "Can you tell me about your leadership experience and team management skills?",
+    "Long, fun Query": "You are applying for a role that involves building web-based applications with a focus on creating intuitive user interfaces and implementing machine learning models for real-time data analysis. The position requires expertise in frontend development using modern frameworks like React or Next.js, as well as experience integrating backend systems for AI-powered features. Please provide detailed examples of your projects or experiences where you developed interactive UIs, integrated machine learning models into applications, or worked on AI-powered tools. Include the specific technologies, frameworks, and programming languages you used (e.g., JavaScript, TypeScript, Python, TensorFlow, PyTorch), challenges you encountered during development, and how you addressed them. Additionally, highlight how you optimized performance, ensured scalability, and collaborated with cross-functional teams to deliver these solutions."
+}
 
 page_style = """
 <style>
-.main > div {
-    padding-top: 1rem;
+.main {
+    padding: 0 !important;
 }
-[data-testid="column"] {
-    height: calc(100vh - 100px);
-    overflow-y: auto !important;
+
+.debug-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    border-top: 2px solid #ddd;
     padding: 1rem;
+    transform: translateY(100%);
+    transition: transform 0.3s ease-out;
+    z-index: 1000;
+    height: 50vh;
+    overflow-y: auto;
 }
-[data-testid="column"] > div {
-    height: 100%;
+
+.debug-panel.open {
+    transform: translateY(0);
 }
-.stChatMessage {
-    overflow-wrap: break-word;
+
+.sample-query-container {
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+}
+
+.query-count {
+    color: #666;
+    font-size: 0.9em;
+    margin-top: 0.5rem;
 }
 </style>
-"""
-
-class RAGConfig:
-    """Configuration options for the RAG pipeline"""
-
-    RETRIEVER_OPTIONS = {
-        "Similarity Search": "vector",
-        "Query Fusion": "query_fusion",
-    }
-    
-    POSTPROCESSOR_OPTIONS = {
-        "None": None,
-        "Similarity": "similarity",
-        "Rerank": "rerank",
-        "Sentence Embedding": "sentence_embedding"
-    }
-    
-    RESPONSE_MODE_OPTIONS = {
-        "Compact": ResponseMode.COMPACT,
-        "Tree Summarize": ResponseMode.TREE_SUMMARIZE,
-        "Refine": ResponseMode.REFINE,
-        "Simple Summarize": ResponseMode.SIMPLE_SUMMARIZE,
-        "Accumulate": ResponseMode.ACCUMULATE
-    }
-    
+""" 
 class DebugMessage:
-    """Structure for debug messages with metadata"""
+    """Structured debug message with organized sections"""
     def __init__(self, query: str):
         self.query = query
         self.timestamp = datetime.now()
-        self.messages: List[str] = []
-        self.expanded = False
-    
-    def add_message(self, message: str):
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        self.messages.append(f"[{timestamp}] {message}")
+        self.sections = {
+            "query_info": [],      # Basic query information
+            "retrieval": [],       # Retrieval-related information
+            "processing": [],      # Processing steps
+            "response": [],        # Response generation
+            "errors": []           # Any errors that occurred
+        }
+
+    def add_to_section(self, section: str, message: str):
+        """Add a message to a specific section with timestamp"""
+        if section in self.sections:
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Format as HH:MM:SS.mmm
+            self.sections[section].append(f"[{timestamp}] {message.strip()}")
+
+    def get_formatted_section(self, section: str, title: str) -> str:
+        """Format a section's messages with a title"""
+        if not self.sections[section]:
+            return ""
+        
+        messages = self.sections[section]
+        return f"{title}:\n" + "\n".join(f"  {msg}" for msg in messages)
 
     def get_formatted_messages(self) -> str:
-        return "\n".join(self.messages)
-    
+        """Get all sections formatted nicely"""
+        sections_text = []
+        
+        # Query Information
+        if self.sections["query_info"]:
+            sections_text.append(self.get_formatted_section("query_info", "Query Information"))
+        
+        # Retrieval Information
+        if self.sections["retrieval"]:
+            sections_text.append(self.get_formatted_section("retrieval", "Retrieval Process"))
+        
+        # Processing Steps
+        if self.sections["processing"]:
+            sections_text.append(self.get_formatted_section("processing", "Processing Steps"))
+        
+        # Response Generation
+        if self.sections["response"]:
+            sections_text.append(self.get_formatted_section("response", "Response Generation"))
+        
+        # Errors (only if present)
+        if self.sections["errors"]:
+            sections_text.append(self.get_formatted_section("errors", "⚠️ Errors"))
+
+        return "\n\n".join(section for section in sections_text if section)
+
 class OutputCapture:
-    """Capture and redirect stdout/stderr for debug panel"""
+    """Capture and redirect stdout/stderr with section routing"""
     def __init__(self, debug_message: DebugMessage):
         self.debug_message = debug_message
 
     def write(self, text):
-        if text.strip():  # Only process non-empty strings
-            self.debug_message.add_message(text.strip())
+        """Capture and route output to debug message sections"""
+        if text.strip():
+            # Check for section prefix in square brackets
+            text = text.strip()
+            if text.startswith('['):
+                try:
+                    section = text[1:text.index(']')]
+                    message = text[text.index(']')+1:].strip()
+                    self.debug_message.add_to_section(section, message)
+                except ValueError:
+                    # If message isn't properly formatted, add to processing
+                    self.debug_message.add_to_section('processing', text)
+            else:
+                # Default to processing section if no prefix
+                self.debug_message.add_to_section('processing', text)
 
     def flush(self):
         pass
@@ -109,6 +147,7 @@ class RAGApp:
             pipeline: Pre-configured query processing pipeline
             db_connection: Database connection object to check connectivity
         """
+        
         self.pipeline = pipeline
         self.index_text = index_text
         self.index_keywords = index_keywords
@@ -116,29 +155,20 @@ class RAGApp:
         self._initialize_session_state()
 
     def _initialize_session_state(self):
-        # set debug mode to true by default
-        st.session_state.show_debug = True
-        st.session_state.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or None
+        """Initialize all session state variables with default values"""
+        defaults = {
+            'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
+            'using_default_key': True,
+            'messages': [],
+            'db_connected': False,
+            'debug_messages': [],
+            'previous_query': None
+        }
         
-        if "chat_memory" not in st.session_state:
-            st.session_state.chat_memory = ChatMemoryBuffer.from_defaults(token_limit=3900)
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        if "OPENAI_API_KEY" not in st.session_state:
-            st.session_state.OPENAI_API_KEY = None
-        if "db_connected" not in st.session_state:
-            st.session_state.db_connected = False
-        if "debug_messages" not in st.session_state:
-            st.session_state.debug_messages = []
-        if "current_retriever" not in st.session_state:
-            st.session_state.current_retriever = "Similarity Search"
-        if "current_postprocessor" not in st.session_state:
-            st.session_state.current_postprocessor = "Rerank"
-        if "current_response_mode" not in st.session_state:
-            st.session_state.current_response_mode = "Compact"
-        if "retriever_config" not in st.session_state:
-            st.session_state.retriever_config = {}
-            
+        for key, default_value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = default_value
+
     @contextmanager
     def capture_output(self, debug_message: DebugMessage):
         """Context manager to capture stdout/stderr"""
@@ -146,7 +176,7 @@ class RAGApp:
         stdout, stderr = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = output_capture, output_capture
         try:
-            yield
+            yield output_capture
         finally:
             sys.stdout, sys.stderr = stdout, stderr
             
@@ -186,184 +216,132 @@ class RAGApp:
     def init_sidebar(self):
         """Initialize the sidebar with all configurations"""
         with st.sidebar:
-            st.header("Configuration")
-            
-            # API Key input
-            api_key = st.text_input(
-                "OpenAI API Key",
-                type="password",
-                help="Enter your OpenAI API key to use the application",
-                key="openai_key_input"
-            )
-            if api_key:
-                st.session_state.OPENAI_API_KEY = api_key
-                os.environ['OPENAI_API_KEY'] = api_key
-
             # Database connection status
-            st.subheader("System Status")
+            st.subheader("Database Status")
             if st.session_state.db_connected:
                 st.success("✓ Connected to database")
             else:
                 st.error("✗ Database disconnected")
                 if st.button("Retry Connection"):
                     self.check_database_connection()
-                    
-            # Debug panel toggle
-            st.session_state.show_debug = st.toggle(
-                "Show Debug Panel",
-                value=st.session_state.show_debug,
-                help="Show background processing information"
-            )
 
-            # RAG Pipeline Configuration
-            st.subheader("Pipeline Configuration")
-
-            # Retriever Selection
-            st.session_state.current_retriever = st.selectbox(
-                "Select Retriever",
-                options=list(RAGConfig.RETRIEVER_OPTIONS.keys()),
-                index=list(RAGConfig.RETRIEVER_OPTIONS.keys()).index(st.session_state.current_retriever)
-            )
-
-            # Retriever-specific configuration
-            with st.expander("Retriever Configuration"):
-                if st.session_state.current_retriever == "Similarity Search":
-                    st.session_state.retriever_config["similarity_top_k"] = st.slider(
-                        "Top K Results",
-                        min_value=1,
-                        max_value=20,
-                        value=st.session_state.retriever_config.get("similarity_top_k", 3)
-                    )
-                    st.session_state.retriever_config["similarity_cutoff"] = st.slider(
-                        "Similarity Cutoff",
-                        min_value=0.0,
-                        max_value=1.0,
-                        value=st.session_state.retriever_config.get("similarity_cutoff", 0.7)
-                    )
-
-            # Postprocessor Selection
-            st.session_state.current_postprocessor = st.selectbox(
-                "Select Postprocessor",
-                options=list(RAGConfig.POSTPROCESSOR_OPTIONS.keys()),
-                index=list(RAGConfig.POSTPROCESSOR_OPTIONS.keys()).index(st.session_state.current_postprocessor)
-            )
-
-            # Response Mode Selection
-            st.session_state.current_response_mode = st.selectbox(
-                "Select Response Mode",
-                options=list(RAGConfig.RESPONSE_MODE_OPTIONS.keys()),
-                index=list(RAGConfig.RESPONSE_MODE_OPTIONS.keys()).index(st.session_state.current_response_mode)
-            )
-
-
+            # Tips Section
+            st.markdown("---")
+            st.markdown("""
+                ### Tips
+                - Select from sample queries or type your own
+                - Check the debug panel to understand the process
+            """)
+            
             if st.button("Clear Chat History"):
                 st.session_state.messages = []
-                st.session_state.chat_memory.reset()
                 st.session_state.debug_messages = []
                 st.success("Chat history cleared!")
 
-            # System information
-            st.markdown("---")
-            st.markdown("""
-                ### Usage Tips
-                - Ensure database connection is active
-                - Be specific in your questions
-                - Clear chat history for new sessions
-            """)
-
-    def get_current_pipeline_config(self) -> Dict[str, Any]:
-        """Get the current pipeline configuration based on sidebar selections"""
-        config = {
-            "retriever": RAGConfig.RETRIEVER_OPTIONS[st.session_state.current_retriever],
-            "retriever_config": st.session_state.retriever_config,
-            "postprocessor": RAGConfig.POSTPROCESSOR_OPTIONS[st.session_state.current_postprocessor],
-            "response_mode": RAGConfig.RESPONSE_MODE_OPTIONS[st.session_state.current_response_mode]
-        }
-        return config
-
     async def process_query_with_streaming(self, query: str, response_placeholder, debug_message: DebugMessage) -> str:
-        """
-        Process a query with streaming response and debug output
-        
-        Args:
-            query: User's input query
-            response_placeholder: Streamlit placeholder for response
-            debug_message: DebugMessage object to store debug output
-        """
+        """Process a query with streaming response and debug output"""
         try:
             if not st.session_state.db_connected:
+                debug_message.add_to_section("errors", "Database connection is not active")
                 return "Sorry, I cannot process your query as the database connection is not active."
 
-            # Initialize empty response
             full_response = ""
             
-            debug_message.add_message(f"Pipeline Configuration:")
-            debug_message.add_message(f"- Retriever: {st.session_state.current_retriever}")
-            debug_message.add_message(f"- Retriever Config: {st.session_state.retriever_config}")
-            debug_message.add_message(f"- Postprocessor: {st.session_state.current_postprocessor}")
-            debug_message.add_message(f"- Response Mode: {st.session_state.current_response_mode}")
-
-            # Capture all stdout/stderr during processing
+            # Capture and display debug output during processing
             with self.capture_output(debug_message):
-                print(f"Processing query: {query}")
-                print("Initializing pipeline...")
+                # Query Information
+                print(f"[query_info] Input query: {query}")
+                print(f"[query_info] Query length: {len(query)} characters")
                 
-                # Get the current pipeline configuration
-                pipeline_config = self.get_current_pipeline_config()
-                result = await self.pipeline.run(
-                    query=query, 
-                    index_text=self.index_text, 
-                    index_keywords=self.index_keywords,
-                    config=pipeline_config
-                )
+                # Processing
+                print("[processing] Starting post-retrieval processing")
                 
-                # Stream the response
-                print("Streaming response...")
+                # Process through pipeline
+                result = await self.pipeline.run(query=query, index_text=self.index_text, index_keywords=self.index_keywords)
+                
+                # Response Generation
+                print("[response] Starting response generation")
+                
                 async for chunk in result.async_response_gen():
                     full_response += chunk
                     response_placeholder.markdown(full_response + "▌")
-                    
-                print("Response complete")
-                print(f"Final response length: {len(full_response)} characters")
+                
+                print(f"[response] Response length: {len(full_response)} characters")
+                print("[response] Response generation complete")
             
-            # Final response update
             response_placeholder.markdown(full_response)
             return full_response
             
         except Exception as e:
             error_msg = f"Error processing query: {str(e)}"
-            debug_message.add_message(error_msg)
-            print(error_msg)  # This will be captured in debug output
+            debug_message.add_to_section("errors", error_msg)
             st.error(error_msg)
             return "Sorry, I encountered an error while processing your query."
 
     def render_debug_panel(self):
-        """Render the debug panel with expandable messages"""
-        st.markdown("<h3>Debug Output</h3>", unsafe_allow_html=True)
-        
-        for debug_msg in reversed(st.session_state.debug_messages):  # Show newest first
-            with st.expander(
-                f"Query: {debug_msg.query[:50]}... ({debug_msg.timestamp.strftime('%H:%M:%S')})",
-                expanded=False
-            ):
-                # Display all captured output
-                st.code(debug_msg.get_formatted_messages(), language="")
+        """Render the debug panel with organized sections"""
+        with st.container():
+            st.markdown('<div class="debug-panel">', unsafe_allow_html=True)
+            
+            # Simplified debug panel header
+            st.markdown("""
+                <div style='margin-bottom: 1rem;'>
+                    <h3 style='margin: 0;'>Debug Output</h3>
+                    <p style='color: #666; margin: 0;'>Showing process details and diagnostics</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Display debug messages in reverse chronological order
+            for debug_msg in reversed(st.session_state.debug_messages):
+                self._render_debug_message(debug_msg)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    def _render_debug_message(self, debug_msg):
+        """Helper method to render individual debug messages"""
+        with st.expander(f"Query: {debug_msg.query[:50]}...", expanded=False):
+            # Show errors first if any exist
+            if debug_msg.sections["errors"]:
+                st.error(debug_msg.get_formatted_section("errors", "⚠️ Errors"))
+            
+            # Create two-column layout for debug info
+            col1, col2 = st.columns(2)
+            
+            # Left column: Query info and processing steps
+            with col1:
+                self._render_debug_section(debug_msg, "query_info", "Query Information")
+                self._render_debug_section(debug_msg, "processing", "Processing Steps")
+            
+            # Right column: Retrieval and response info
+            with col2:
+                self._render_debug_section(debug_msg, "retrieval", "Retrieval Process")
+                self._render_debug_section(debug_msg, "response", "Response Generation")
+
+    def _render_debug_section(self, debug_msg, section_name: str, title: str):
+        """Helper method to render a debug section"""
+        if debug_msg.sections[section_name]:
+            st.markdown(f"**{title}**")
+            st.code("\n".join(debug_msg.sections[section_name]), language="")
 
     async def render_chat_area(self):
+        """Render the chat area with query selection and input"""
         # Check database connection
         if not self.check_database_connection():
             st.warning("Cannot process queries: Database connection is not active.")
             return
         
-        # Check for API key
-        if not self.check_openai_key():
-            st.warning("Please enter your OpenAI API key in the sidebar to continue.")
-            return
+        # Initialize the session state for query selection
+        if 'previous_query' not in st.session_state:
+            st.session_state.previous_query = None
         
-        # Create container for chat
+        selected_query = st.selectbox(
+            "Try a sample query or type your own below:",
+            options=list(SAMPLE_QUERIES.keys()),
+            key='query_selector'
+        )
+        
+        # Create containers for chat and input
         chat_container = st.container()
-        
-        # Create container for input at the bottom
         input_container = st.container()
         
         # Use the chat container for messages
@@ -377,60 +355,60 @@ class RAGApp:
             
         # Use the input container for the chat input
         with input_container:
-            st.markdown('<div class="chat-input">', unsafe_allow_html=True)
-            # Chat input
-            if prompt := st.chat_input(
+            user_input  = st.chat_input(
                 "What would you like to know?",
                 disabled=not st.session_state.db_connected
-            ):
-                # Create debug message object for this query
-                debug_msg = DebugMessage(prompt)
-                st.session_state.debug_messages.append(debug_msg)
-                
-                # Display user message (in chat container)
-                with chat_container:
-                    st.chat_message("user").markdown(prompt)
-                    st.session_state.messages.append({"role": "user", "content": prompt})
+            )
+            
+            # Simplified prompt handling
+            prompt = None
+            if user_input:
+                prompt = user_input
+                st.session_state.previous_query = None
+            elif selected_query != "Select a sample query..." and selected_query != st.session_state.previous_query:
+                prompt = SAMPLE_QUERIES[selected_query]
+                st.session_state.previous_query = selected_query
 
-                    # Create placeholder for assistant response
-                    assistant_response = st.chat_message("assistant")
-                    response_placeholder = assistant_response.empty()
+            if prompt:
+                await self._process_chat_message(prompt, chat_container)
 
-                    # Process query
-                    full_response = await self.process_query_with_streaming(
-                        prompt,
-                        response_placeholder,
-                        debug_msg
-                    )
-                    
-                    # Store the complete response
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": full_response
-                    })
-            st.markdown('</div>', unsafe_allow_html=True)
+    async def _process_chat_message(self, prompt: str, chat_container):
+        """Helper method to process and display chat messages"""
+        debug_msg = DebugMessage(prompt)
+        st.session_state.debug_messages.append(debug_msg)
+        
+        with chat_container:
+            # Display user message
+            st.chat_message("user").markdown(prompt)
+            st.session_state.messages.append({"role": "user", "content": prompt})
+
+            # Process and display assistant response
+            assistant_response = st.chat_message("assistant")
+            response_placeholder = assistant_response.empty()
+
+            full_response = await self.process_query_with_streaming(
+                prompt,
+                response_placeholder,
+                debug_msg
+            )
+            
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": full_response
+            })
 
     async def run(self):
         """Run the Streamlit application"""
-        st.title("💡 RAG Assistant")
+        st.markdown("# 📚 **RAG Assistant for Career Portfolio Querying**")
         
         # Initialize sidebar
-        self.init_sidebar()
-                
-        # Create two-column layout
-        chat_col, debug_col = st.columns(2)
-        
-        #st.markdown(page_style, unsafe_allow_html=True)
+        self.init_sidebar()        
         
         # Render chat area in left column
-        with chat_col.container():
-            await self.render_chat_area()
+        await self.render_chat_area()
         
         # Render debug panel in right column
-        with debug_col.container():
-            self.render_debug_panel()
-
-
+        self.render_debug_panel()
 
 from rag_pipeline import RAGWorkflow
 from rag_setup import index_database_connection, set_up_llm, set_up_embeddings
@@ -438,8 +416,8 @@ from rag_setup import index_database_connection, set_up_llm, set_up_embeddings
 async def main():
     """Main entry point for the application"""
     st.set_page_config(
-        page_title="RAG Assistant",
-        page_icon="💡",
+        page_title="Career Portfolio RAG Assistant",
+        page_icon="📚",
         layout="wide",
         initial_sidebar_state="expanded"
     )
