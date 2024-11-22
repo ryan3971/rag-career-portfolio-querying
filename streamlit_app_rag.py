@@ -419,7 +419,7 @@ async def main():
         page_title="Career Portfolio RAG Assistant",
         page_icon="📚",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="collapsed"
     )
     # initialize the LLM and embeddings
     llm = set_up_llm()

@@ -131,7 +131,7 @@ class RAGWorkflow(Workflow):
             percentile_cutoff=0.7,  # Keep top 70% of sentences
             context_before=2,
             context_after=2,
-            threshold_cutoff=0.15
+        #    threshold_cutoff=0.15  $ this may be able to replace the similarity postprocessor
         )
       
         # Running this takes the longest time in the pipeline
