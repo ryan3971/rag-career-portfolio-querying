@@ -65,7 +65,8 @@ The main application class that:
 ### Environment Variables
 ```
 NOTION_TOKEN=your_notion_api_token
-NOTION_DATABASE_ID=your_database_id
+NOTION_PROJECTS_DATABASE_ID=notion_database_id_for_projects
+NOTION_EXPERIENCE_DATABASE_ID=notion_database_id_for_experiences
 QDRANT_URL=your_qdrant_url
 QDRANT_API_KEY=your_qdrant_api_key
 OPENAI_API_KEY=your_openai_api_key
