@@ -89,7 +89,7 @@ class RAGWorkflow(Workflow):
             
             # Update existing text node score if found
             if parent_id in text_node_map:
-                text_node_map[parent_id].score = kw_node.score
+                text_node_map[parent_id].score = max(text_node_map[parent_id].score, kw_node.score)
                 continue
                 
             # Add new parent node if not found
