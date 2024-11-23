@@ -134,9 +134,46 @@ class RAGWorkflow(Workflow):
         #    threshold_cutoff=0.15  $ this may be able to replace the similarity postprocessor
         )
       
-        # Running this takes the longest time in the pipeline
-        nodes_transformed = sentence_embedding_optimizer.postprocess_nodes(nodes=nodes_transformed, query_bundle=query_bundle)
+        # Process nodes in concurrent batches
+        BATCH_SIZE = 2  # Adjust based on your needs
         
+        # Create batches
+        batches = [
+            nodes_transformed[i:i + BATCH_SIZE] 
+            for i in range(0, len(nodes_transformed), BATCH_SIZE)
+        ]
+        
+        log_step("processing", f"Starting concurrent processing of {len(batches)} batches (batch size: {BATCH_SIZE})")
+        log_step("processing", f"Total nodes to process: {len(nodes_transformed)}")
+        
+        # Create a counter for completed batches
+        completed_batches = 0
+        
+        async def process_batch(batch, batch_num):
+            nonlocal completed_batches
+            result = await asyncio.to_thread(
+                sentence_embedding_optimizer.postprocess_nodes,
+                nodes=batch,
+                query_bundle=query_bundle
+            )
+            completed_batches += 1
+            log_step("processing", f"Completed batch {batch_num + 1}/{len(batches)} ({completed_batches * BATCH_SIZE} nodes processed)")
+            return result
+        
+        # Process all batches concurrently
+        batch_results = await asyncio.gather(*[
+            process_batch(batch, i) 
+            for i, batch in enumerate(batches)
+        ])
+        
+        # Combine results from all batches
+        nodes_transformed = [
+            node 
+            for batch_result in batch_results 
+            for node in batch_result
+        ]
+        
+        log_step("processing", f"All batches complete. Final node count: {len(nodes_transformed)}")
         log_step("processing", "Filtered and transformed nodes:", nodes_transformed)
         return PostRetrievalTransform(nodes_transformed=nodes_transformed)
         
