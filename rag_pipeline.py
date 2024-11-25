@@ -32,9 +32,13 @@ class PostRetrievalTransform(Event):
 class RAGWorkflow(Workflow):
     """Workflow for the RAG pipeline"""
     def __init__(self, llm, embed_model):
-        super().__init__()
+        super().__init__(
+            timeout=20,
+            verbose=True
+        )
         self.llm = llm
         self.embed_model = embed_model
+        
     
     @step
     async def retrieve(self, ctx: Context, ev: StartEvent) -> RetrieverEvent | None:
@@ -119,61 +123,61 @@ class RAGWorkflow(Workflow):
         
         # Apply the similarity postprocessor to remove low-scoring nodes
         similarity_postprocessor = SimilarityPostprocessor(
-            similarity_cutoff=0.15
+            similarity_cutoff=0.20
         )
         nodes_transformed = similarity_postprocessor.postprocess_nodes(nodes=ev.nodes, query_bundle=query_bundle)
         
         log_step("processing", "Similarity postprocessor done")
         
-        # Initialize reranker with optimal settings
-        sentence_embedding_optimizer = SentenceEmbeddingOptimizer(
-            embed_model=Settings.embed_model,
-            percentile_cutoff=0.7,  # Keep top 70% of sentences
-            context_before=2,
-            context_after=2,
-        #    threshold_cutoff=0.15  $ this may be able to replace the similarity postprocessor
-        )
+        # # Initialize reranker with optimal settings
+        # sentence_embedding_optimizer = SentenceEmbeddingOptimizer(
+        #     embed_model=Settings.embed_model,
+        #     percentile_cutoff=0.7,  # Keep top 70% of sentences
+        #     context_before=2,
+        #     context_after=2,
+        # #    threshold_cutoff=0.15  $ this may be able to replace the similarity postprocessor
+        # )
       
-        # Process nodes in concurrent batches
-        BATCH_SIZE = 2  # Adjust based on your needs
+        # # Process nodes in concurrent batches
+        # BATCH_SIZE = 2  # Adjust based on your needs
         
-        # Create batches
-        batches = [
-            nodes_transformed[i:i + BATCH_SIZE] 
-            for i in range(0, len(nodes_transformed), BATCH_SIZE)
-        ]
+        # # Create batches
+        # batches = [
+        #     nodes_transformed[i:i + BATCH_SIZE] 
+        #     for i in range(0, len(nodes_transformed), BATCH_SIZE)
+        # ]
         
-        log_step("processing", f"Starting concurrent processing of {len(batches)} batches (batch size: {BATCH_SIZE})")
-        log_step("processing", f"Total nodes to process: {len(nodes_transformed)}")
+        # log_step("processing", f"Starting concurrent processing of {len(batches)} batches (batch size: {BATCH_SIZE})")
+        # log_step("processing", f"Total nodes to process: {len(nodes_transformed)}")
         
-        # Create a counter for completed batches
-        completed_batches = 0
+        # # Create a counter for completed batches
+        # completed_batches = 0
         
-        async def process_batch(batch, batch_num):
-            nonlocal completed_batches
-            result = await asyncio.to_thread(
-                sentence_embedding_optimizer.postprocess_nodes,
-                nodes=batch,
-                query_bundle=query_bundle
-            )
-            completed_batches += 1
-            log_step("processing", f"Completed batch {batch_num + 1}/{len(batches)} ({completed_batches * BATCH_SIZE} nodes processed)")
-            return result
+        # async def process_batch(batch, batch_num):
+        #     nonlocal completed_batches
+        #     result = await asyncio.to_thread(
+        #         sentence_embedding_optimizer.postprocess_nodes,
+        #         nodes=batch,
+        #         query_bundle=query_bundle
+        #     )
+        #     completed_batches += 1
+        #     log_step("processing", f"Completed batch {batch_num + 1}/{len(batches)} ({completed_batches * BATCH_SIZE} nodes processed)")
+        #     return result
         
-        # Process all batches concurrently
-        batch_results = await asyncio.gather(*[
-            process_batch(batch, i) 
-            for i, batch in enumerate(batches)
-        ])
+        # # Process all batches concurrently
+        # batch_results = await asyncio.gather(*[
+        #     process_batch(batch, i) 
+        #     for i, batch in enumerate(batches)
+        # ])
         
-        # Combine results from all batches
-        nodes_transformed = [
-            node 
-            for batch_result in batch_results 
-            for node in batch_result
-        ]
+        # # Combine results from all batches
+        # nodes_transformed = [
+        #     node 
+        #     for batch_result in batch_results 
+        #     for node in batch_result
+        # ]
         
-        log_step("processing", f"All batches complete. Final node count: {len(nodes_transformed)}")
+        # log_step("processing", f"All batches complete. Final node count: {len(nodes_transformed)}")
         log_step("processing", "Filtered and transformed nodes:", nodes_transformed)
         return PostRetrievalTransform(nodes_transformed=nodes_transformed)
         
